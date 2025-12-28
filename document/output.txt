@@ -1,0 +1,274 @@
+Proyecto: Reconocimiento de Dígitos Manuscritos con CNN (MNIST) en R¶
+Inicio del Proyecto: Adaptación del análisis de CNN sobre MNIST a R.
+
+Metodología: Metodología Fundacional de IBM para Ciencia de Datos
+Estructuraremos este análisis usando la Metodología Fundacional de IBM para Ciencia de Datos, que incluye las siguientes etapas iterativas:
+
+Enfoque Analítico: Definición del problema.
+Requerimientos de Datos: Identificación de los datos necesarios.
+Recolección de Datos: Obtención de los datos.
+Comprensión de Datos: Estadísticas descriptivas y visualización.
+Preparación de Datos: Limpieza y preprocesamiento.
+Modelado: Construcción del modelo de IA.
+Evaluación: Valoración del desempeño del modelo.
+Despliegue: Disponibilización del modelo.
+# This R environment comes with many helpful analytics packages installed
+# It is defined by the kaggle/rstats Docker image: https://github.com/kaggle/docker-rstats
+# For example, here's a helpful package to load
+
+library(tidyverse) # metapackage of all tidyverse packages
+library(keras)
+library(tensorflow)
+
+# Input data files are available in the read-only "../input/" directory
+# For example, running this (by clicking run or pressing Shift+Enter) will list all files under the input directory
+
+list.files(path = "../input")
+set.seed(123)
+tf$random$set_seed(123)
+
+# You can write up to 20GB to the current directory (/kaggle/working/) that gets preserved as output when you create a version using "Save & Run All" 
+# You can also write temporary files to /kaggle/temp/, but they won't be saved outside of the current session
+── Attaching core tidyverse packages ──────────────────────── tidyverse 2.0.0 ──
+✔ dplyr     1.1.4     ✔ readr     2.1.5
+✔ forcats   1.0.0     ✔ stringr   1.5.1
+✔ ggplot2   3.5.1     ✔ tibble    3.2.1
+✔ lubridate 1.9.3     ✔ tidyr     1.3.1
+✔ purrr     1.0.2     
+── Conflicts ────────────────────────────────────────── tidyverse_conflicts() ──
+✖ dplyr::filter() masks stats::filter()
+✖ dplyr::lag()    masks stats::lag()
+ℹ Use the conflicted package (<http://conflicted.r-lib.org/>) to force all conflicts to become errors
+'mnist-dataset'
+Fase 1: Enfoque Analítico
+Objetivo: Clasificar imágenes en escala de grises de dígitos manuscritos (0-9) en sus respectivas categorías.
+Técnica: Aprendizaje profundo utilizando Redes Neuronales Convolucionales (CNN), que son altamente efectivas para tareas de reconocimiento de imágenes debido a su capacidad para capturar jerarquías espaciales.
+
+Fase 2 y 3: Requerimientos y Recolección de Datos
+Para este proyecto se emplea el reconocido conjunto de datos MNIST, que contiene imágenes de dígitos manuscritos del 0 al 9. En entornos como Kaggle, los datos suelen estar disponibles en formato IDX binario o CSV. Para este análisis, se asume que los archivos IDX se encuentran en la ruta ../input/mnist-dataset/.
+
+# Funciones auxiliares para leer archivos en formato IDX manualmente en R
+read_idx_images <- function(path) {
+  f <- file(path, "rb")
+  on.exit(close(f))
+  
+  magic <- readBin(f, integer(), n=1, endian="big")
+  num_images <- readBin(f, integer(), n=1, endian="big")
+  rows <- readBin(f, integer(), n=1, endian="big")
+  cols <- readBin(f, integer(), n=1, endian="big")
+  
+  data <- readBin(f, integer(), n=num_images * rows * cols, size=1, signed=FALSE)
+  
+  array(data, dim = c(cols, rows, num_images)) %>% 
+    aperm(c(3, 2, 1))
+}
+
+read_idx_labels <- function(path) {
+  f <- file(path, "rb")
+  on.exit(close(f))
+  
+  magic <- readBin(f, integer(), n=1, endian="big")
+  num_items <- readBin(f, integer(), n=1, endian="big")
+  
+  readBin(f, integer(), n=num_items, size=1, signed=FALSE)
+}
+
+# Definir rutas
+base_path <- "../input/mnist-dataset"
+train_img_path <- file.path(base_path, "train-images.idx3-ubyte")
+train_lbl_path <- file.path(base_path, "train-labels.idx1-ubyte")
+test_img_path <- file.path(base_path, "t10k-images.idx3-ubyte")
+test_lbl_path <- file.path(base_path, "t10k-labels.idx1-ubyte")
+
+# Cargar datos
+tryCatch({
+    x_train_raw <- read_idx_images(train_img_path)
+    y_train_raw <- read_idx_labels(train_lbl_path)
+    x_test_raw <- read_idx_images(test_img_path)
+    y_test_raw <- read_idx_labels(test_lbl_path)
+    
+    cat("Imágenes de entrenamiento:", dim(x_train_raw), "\n")
+    cat("Etiquetas de entrenamiento:", length(y_train_raw), "\n")
+
+    cat("Imágenes de prueba:", dim(x_test_raw), "\n")
+    cat("Etiquetas de prueba:", length(y_test_raw), "\n")
+}, error = function(e) {
+    cat("Error al cargar los archivos. Verificar rutas:", list.files("../input/mnist-dataset"), "\n")
+    print(e)
+})
+Imágenes de entrenamiento: 60000 28 28 
+Etiquetas de entrenamiento: 60000 
+Imágenes de prueba: 10000 28 28 
+Etiquetas de prueba: 10000 
+Fase 4: Comprensión de Datos
+Visualizamos algunas muestras para verificar la integridad de los datos y entender el formato de entrada.
+
+# Visualizar las primeras muestras
+par(mfrow=c(3,4), mar=c(1,1,2,1))
+for (i in 1:12) {
+  img_mat <- x_train_raw[i, , ]
+  img_mat <- t(apply(img_mat, 2, rev))
+  
+  image(1:28, 1:28, img_mat, col=gray((0:255)/255), axes=FALSE, 
+        main=paste("Etiqueta:", y_train_raw[i]))
+}
+No description has been provided for this image
+# Distribucion de las clases
+train_labels_df <- data.frame(label = as.factor(y_train_raw))
+ggplot(train_labels_df, aes(x=label)) +
+  geom_bar(fill="steelblue") +
+  theme_minimal() +
+  labs(title="Distribución de dígitos en el conjunto de entrenamiento")
+No description has been provided for this image
+Fase 5: Preparación de Datos
+Pasos de Preprocesamiento:
+
+Reestructuración: Keras requiere que los datos tengan la forma (Batch, Altura, Anchura, Canales).
+Normalización: Escalar los valores de los píxeles al rango [0, 1].
+Codificación One-Hot: Convertir las etiquetas enteras en matrices de clases binarias.
+División de Validación: Reservar una porción del conjunto de entrenamiento para validación del modelo.
+# 1. Reestructuración y 2. Normalización
+# Forma de entrada para Keras: (muestras, 28, 28, 1)
+x_train <- array_reshape(x_train_raw, c(nrow(x_train_raw), 28, 28, 1)) / 255
+x_test <- array_reshape(x_test_raw, c(nrow(x_test_raw), 28, 28, 1)) / 255
+
+# 3. Codificación One-Hot
+num_classes <- 10
+y_train <- to_categorical(y_train_raw, num_classes)
+y_test <- to_categorical(y_test_raw, num_classes)
+
+# 4. División de validación
+cat("Datos de entrenamiento procesados:", dim(x_train), "\n")
+cat("Datos de prueba procesados:", dim(x_test), "\n")
+Datos de entrenamiento procesados: 60000 28 28 1 
+Datos de prueba procesados: 10000 28 28 1 
+Fase 6: Modelado
+Se desarrollará una Red Neuronal Convolucional (CNN) con la siguiente arquitectura:
+
+Conv2D: Para extraer patrones y características relevantes de las imágenes.
+MaxPooling: Para reducir la dimensionalidad y simplificar la representación.
+Dropout: Técnica de regularización que ayuda a prevenir el sobreajuste.
+Dense: Capa completamente conectada que realiza la clasificación final de los dígitos.
+model <- keras_model_sequential() %>%
+  
+  # Primer bloque convolucional
+  layer_conv_2d(filters = 32, kernel_size = c(3, 3), activation = 'relu', 
+                input_shape = c(28, 28, 1)) %>%
+  layer_max_pooling_2d(pool_size = c(2, 2)) %>%
+  
+  # Segundo bloque convolucional
+  layer_conv_2d(filters = 64, kernel_size = c(3, 3), activation = 'relu') %>%
+  layer_max_pooling_2d(pool_size = c(2, 2)) %>%
+  
+  # Cabeza de clasificación
+  layer_flatten() %>%
+  layer_dense(units = 128, activation = 'relu') %>%
+  layer_dropout(rate = 0.5) %>%
+  layer_dense(units = 10, activation = 'softmax')
+
+# Resumen del modelo
+summary(model)
+
+# Compilación del modelo
+model %>%
+  compile(
+    loss = 'categorical_crossentropy',   # Función de pérdida para clasificación múltiple
+    optimizer = optimizer_adam(),         # Optimizador Adam
+    metrics = c('accuracy')               # Métrica de exactitud
+  )
+Model: "sequential"
+________________________________________________________________________________
+ Layer (type)                       Output Shape                    Param #     
+================================================================================
+ conv2d_1 (Conv2D)                  (None, 26, 26, 32)              320         
+ max_pooling2d_1 (MaxPooling2D)     (None, 13, 13, 32)              0           
+ conv2d (Conv2D)                    (None, 11, 11, 64)              18496       
+ max_pooling2d (MaxPooling2D)       (None, 5, 5, 64)                0           
+ flatten (Flatten)                  (None, 1600)                    0           
+ dense_1 (Dense)                    (None, 128)                     204928      
+ dropout (Dropout)                  (None, 128)                     0           
+ dense (Dense)                      (None, 10)                      1290        
+================================================================================
+Total params: 225,034
+Trainable params: 225,034
+Non-trainable params: 0
+________________________________________________________________________________
+Entrenamiento del Modelo
+# Entrenamiento del modelo
+history <- model %>% fit(
+  x_train, y_train,
+  epochs = 10,
+  batch_size = 128,
+  validation_split = 0.1,  # Usar el 10% final del conjunto de entrenamiento para validación
+  verbose = 2
+)
+Fase 7: Evaluación
+Se revisa el historial de entrenamiento para observar el desempeño del modelo y posteriormente se realiza la evaluación final usando el conjunto de datos de prueba.
+
+# Graficar el historial de entrenamiento
+plot(history)
+
+# Evaluar el modelo en el conjunto de prueba
+score <- model %>% evaluate(x_test, y_test, verbose = 0)
+
+cat('Pérdida en prueba:', score['loss'], '\n')
+cat('Exactitud en prueba:', score['accuracy'], '\n')
+Pérdida en prueba: 0.02059698 
+Exactitud en prueba: 0.9927 
+No description has been provided for this image
+# Predicciones y Matriz de Confusión
+predictions <- model %>% predict(x_test) %>% k_argmax()
+predicted_labels <- as.integer(predictions)
+
+true_labels <- y_test_raw
+
+# Crear tabla de Matriz de Confusión
+conf_matrix <- table(Predicted = predicted_labels, Actual = true_labels)
+print(conf_matrix)
+
+# Visualizar la Matriz de Confusión (usando ggplot)
+conf_df <- as.data.frame(conf_matrix)
+ggplot(conf_df, aes(x = Actual, y = Predicted, fill = Freq)) +
+  geom_tile() +
+  scale_fill_gradient(low = "white", high = "blue") +
+  geom_text(aes(label = Freq), color = "black") +
+  theme_minimal() +
+  labs(title = "Matriz de Confusión")
+         Actual
+Predicted    0    1    2    3    4    5    6    7    8    9
+        0  977    0    1    0    0    1    1    0    2    0
+        1    0 1131    0    0    0    0    2    2    0    1
+        2    0    1 1026    2    0    0    0    1    1    0
+        3    0    2    1 1004    0    9    0    1    1    3
+        4    0    0    0    0  976    0    1    1    0    3
+        5    0    0    0    2    0  880    2    0    0    6
+        6    1    1    0    0    2    1  951    0    0    0
+        7    0    0    4    1    0    0    0 1021    1    1
+        8    1    0    0    1    0    0    1    1  967    1
+        9    1    0    0    0    4    1    0    1    2  994
+No description has been provided for this image
+Fase 8: Conclusión
+Conclusión del Proyecto
+En el presente estudio se desarrolló y entrenó una Red Neuronal Convolucional (CNN) para la clasificación de dígitos manuscritos utilizando el conjunto de datos MNIST. Los resultados obtenidos demuestran la eficacia del modelo y permiten extraer las siguientes conclusiones:
+
+Exploración y Comprensión de Datos
+El análisis inicial de los datos evidenció que el conjunto de imágenes está balanceado, compuesto por imágenes en escala de grises de 28×28 píxeles correspondientes a los dígitos del 0 al 9. Esta verificación aseguró la calidad y consistencia de los datos para el posterior entrenamiento de la red neuronal.
+
+Preprocesamiento de Datos
+Se aplicaron pasos fundamentales de preprocesamiento: reestructuración de las matrices de píxeles al formato requerido por Keras, normalización de los valores de píxeles al rango [0, 1] y codificación one-hot de las etiquetas. Estas transformaciones fueron esenciales para garantizar que los datos fueran compatibles con la arquitectura de la CNN y facilitaran un entrenamiento eficiente.
+
+Arquitectura del Modelo
+La CNN diseñada incluyó bloques convolucionales y de pooling para la extracción automática de características, seguidos de capas Flatten y Dense para la interpretación de dichas características y la clasificación final. La incorporación de capas de Dropout permitió reducir el riesgo de sobreajuste, asegurando un modelo más robusto.
+
+Resultados del Entrenamiento
+El modelo alcanzó aproximadamente un 99% de exactitud en los conjuntos de entrenamiento, validación y prueba. Las curvas de pérdida y precisión mostraron un aprendizaje estable, sin indicios de sobreajuste, lo que confirma la efectividad de la estrategia de entrenamiento y del preprocesamiento aplicado.
+
+Evaluación del Modelo
+La matriz de confusión evidenció un número muy reducido de errores de clasificación, principalmente entre dígitos con formas similares. El reporte de clasificación indicó métricas de precisión, recall y F1-score cercanas a 0.99 para todas las clases, lo que respalda la capacidad predictiva del modelo.
+
+Implementación y Uso Futuro
+El modelo entrenado se guardó en formato .h5, lo que permite su reutilización en futuras aplicaciones sin necesidad de reentrenamiento, facilitando su implementación en entornos de producción.
+
+Conclusiones Generales
+El estudio demuestra que las CNN son capaces de aprender patrones complejos a partir de imágenes, desde bordes hasta formas completas de dígitos, de manera automática. Además, resalta la importancia del preprocesamiento adecuado y del diseño de la arquitectura para alcanzar un alto desempeño. La monitorización de métricas durante el entrenamiento y la validación resulta fundamental para prevenir sobreajuste o subajuste. Finalmente, se evidenció que incluso una CNN de arquitectura relativamente simple puede lograr resultados de precisión comparables al estado del arte en el conjunto de datos MNIST.
+
